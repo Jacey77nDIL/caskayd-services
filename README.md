@@ -39,22 +39,49 @@ Explicitly refreshes profile pictures for creators who **already have an image**
 ### 3. Automated Discovery Crawler Bot (`crawler.py`)
 An intelligent graph-walking discovery crawler that automatically expands Caskayd's creator database.
 
-- **How it works**:
-  - Seeds from top verified creators in the database (or custom seeds).
-  - Queries Instagram's official chaining endpoint (`discover/chaining/?target_id={pk}`) using `IG_SESSION_ID` to discover 70–80 similar creators per seed.
-  - Automatically filters out private accounts, creators already in `Creator`, and handles already in `CreatorSuggestion`.
-  - Ingests new creators directly into the backend `CreatorSuggestion` queue with status `PENDING` for 1-click admin approval.
+#### Architecture & History Tracking (`CrawledSeed` Table)
+To prevent redundant API queries, every seed explored is permanently recorded in Supabase's `CrawledSeed` table:
+- `id` (UUID / text)
+- `username` (Instagram handle, unique)
+- `platform` ("INSTAGRAM")
+- `isSeed` (boolean)
+- `crawledAt` (timestamp with timezone)
 
-Run crawler:
-```bash
-# Crawl 50 new creators starting from default verified seeds
-python crawler.py --max 50
+#### Operational Modes:
 
-# Crawl from custom seed creators
-python crawler.py --seeds hildabaci brodashagi taaooma --max 100
-```
+1. **Default: Depth-1 Database Loop (Curated)**:
+   - Automatically queries the database for verified creators who have **not yet been recorded in `CrawledSeed`**.
+   - Crawls their immediate algorithmic clusters (70–80 candidates per seed).
+   - Ingests new candidates into `CreatorSuggestion` with status `PENDING`.
+   - Records the explored creators in `CrawledSeed`.
+   - Stops cleanly at Depth 1 so that new seeds are vetted before branching further.
+   ```bash
+   # Automatically crawl the next 3 uncrawled creators from the database
+   python crawler.py --from-db --db-limit 3 --max 50
+
+   # Or simply run without arguments (defaults to database uncrawled seeds)
+   python crawler.py --max 50
+   ```
+
+2. **Explicit Seed Lookups**:
+   - Manually trigger exploration from one or more specific creator handles:
+   ```bash
+   python crawler.py --seeds hildabaci brodashagi taaooma --max 100
+   ```
+
+3. **Deep Sidecar Mode (`--deep` / `--sidecar`)**:
+   - For recursive tree exploration: each returned creator discovered during the crawl is automatically added to the exploration queue in the **same run**.
+   - Every returned creator that gets crawled is recorded in `CrawledSeed` (even before being approved into the main `Creator` table), preventing repeat lookups.
+   ```bash
+   # Deep tree crawl starting from an explicit seed
+   python crawler.py --seeds hildabaci --deep --max 200
+
+   # Deep tree crawl starting from uncrawled DB seeds
+   python crawler.py --from-db --deep --max 300
+   ```
 
 ---
+
 
 ## Environment Variables (`.env`)
 
